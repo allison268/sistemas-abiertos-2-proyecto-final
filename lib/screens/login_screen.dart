@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../widgets/splash_overlay.dart';
+import '../widgets/ui_kit.dart';
 import 'instructions_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -19,13 +22,45 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLogin = true;
   bool _isLoading = false;
   bool _obscurePass = true;
+  bool? _serverOnline;
   String? _errorMessage;
+
+  /// La pantalla de bienvenida solo se muestra al abrir la app, no al cerrar sesión.
+  static bool _splashShown = false;
+  bool _showSplash = !_splashShown;
+
+  @override
+  void initState() {
+    super.initState();
+    _splashShown = true;
+    _checkServer();
+  }
 
   @override
   void dispose() {
     _usernameCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkServer() async {
+    try {
+      final resp = await ApiService().get('/api/salud');
+      if (!mounted) return;
+      setState(() => _serverOnline = resp.ok);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _serverOnline = false);
+    }
+  }
+
+  void _setMode(bool login) {
+    if (_isLogin == login) return;
+    setState(() {
+      _isLogin = login;
+      _errorMessage = null;
+      _formKey.currentState?.reset();
+    });
   }
 
   Future<void> _submit() async {
@@ -48,7 +83,7 @@ class _LoginScreenState extends State<LoginScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result.message),
-          backgroundColor: const Color(0xFF2E7D32),
+          backgroundColor: AppColors.success,
           duration: const Duration(seconds: 1, milliseconds: 500),
           behavior: SnackBarBehavior.floating,
         ),
@@ -69,111 +104,229 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Color(0xFF0033A0), Color(0xFFFFFFFF), Color(0xFF0033A0)],
-            stops: [0.0, 0.5, 1.0],
+  InputDecoration _decoration(String label, IconData icon, {Widget? suffix}) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: AppColors.blueLight),
+      suffixIcon: suffix,
+      filled: true,
+      fillColor: AppColors.sky.withValues(alpha: 0.6),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppColors.line),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: const BorderSide(color: AppColors.blue, width: 2),
+      ),
+    );
+  }
+
+  Widget _logo() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: const LinearGradient(
+          colors: [AppColors.gold, Color(0xFFFFE082)],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipOval(
+        child: Image.asset(
+          'lib/splash y icono/icono_app.jpg',
+          width: 92,
+          height: 92,
+          fit: BoxFit.cover,
+          errorBuilder: (_, _, _) => const SizedBox(
+            width: 92,
+            height: 92,
+            child: Center(child: Text('🇭🇳', style: TextStyle(fontSize: 48))),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _serverChip() {
+    final online = _serverOnline;
+    final Color dot = online == null
+        ? AppColors.gold
+        : (online ? const Color(0xFF69F0AE) : const Color(0xFFFF5252));
+    final String text = online == null
+        ? 'Conectando con el servidor…'
+        : (online
+              ? 'Servidor en línea'
+              : 'Sin conexión con el servidor · toca para reintentar');
+    return GestureDetector(
+      onTap: online == false
+          ? () {
+              setState(() => _serverOnline = null);
+              _checkServer();
+            }
+          : null,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(color: dot, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _modeTabs() {
+    Widget tab(String label, bool selected, VoidCallback onTap) {
+      return Expanded(
+        child: GestureDetector(
+          onTap: _isLoading ? null : onTap,
+          behavior: HitTestBehavior.opaque,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            padding: const EdgeInsets.symmetric(vertical: 11),
+            decoration: BoxDecoration(
+              color: selected ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  color: selected ? AppColors.blue : AppColors.muted,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: AppColors.sky,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          tab('Iniciar sesión', _isLogin, () => _setMode(true)),
+          tab('Registrarse', !_isLogin, () => _setMode(false)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildLogin(),
+        if (_showSplash)
+          Positioned.fill(
+            child: SplashOverlay(
+              onDone: () {
+                if (mounted) setState(() => _showSplash = false);
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildLogin() {
+    return Scaffold(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: const BoxDecoration(gradient: AppColors.hero),
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
               physics: const BouncingScrollPhysics(),
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 20,
-                          spreadRadius: 5,
-                        ),
-                      ],
+              padding: const EdgeInsets.all(20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 440),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _logo(),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Memory Honduras',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 32,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                        letterSpacing: 0.3,
+                      ),
                     ),
-                    child: Column(
-                      children: [
-                        ClipRRect(
-                          borderRadius: BorderRadius.circular(15),
-                          child: Image.asset(
-                            'lib/splash y icono/icono_app.jpg',
-                            height: 80,
-                            width: 80,
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Memory Honduras',
-                          style: TextStyle(
-                            fontSize: 28,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF0033A0),
-                          ),
-                        ),
-                        SizedBox(height: 4),
-                        Text(
-                          '¡Descubre los símbolos patrios!',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF757575),
-                          ),
-                        ),
-                      ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      '¡Descubre los símbolos patrios!',
+                      style: TextStyle(fontSize: 14.5, color: Color(0xFFCFE0FF)),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  Card(
-                    elevation: 8,
-                    color: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
+                    const SizedBox(height: 16),
+                    _serverChip(),
+                    const SizedBox(height: 18),
+                    AppCard(
+                      padding: const EdgeInsets.all(22),
                       child: Form(
                         key: _formKey,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              _isLogin ? 'Iniciar Sesión' : 'Registrarse',
-                              style: const TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF0033A0),
-                              ),
-                            ),
-                            const SizedBox(height: 20),
+                            _modeTabs(),
+                            const SizedBox(height: 22),
                             TextFormField(
                               controller: _usernameCtrl,
                               enabled: !_isLoading,
                               textInputAction: TextInputAction.next,
-                              decoration: InputDecoration(
-                                labelText: 'Usuario',
-                                prefixIcon: const Icon(Icons.person_outline),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFBBDEFB),
-                                  ),
-                                ),
-                                filled: true,
-                                fillColor: const Color(0xFFE3F2FD),
+                              decoration: _decoration(
+                                'Usuario',
+                                Icons.person_outline,
                               ),
                               validator: (v) {
                                 if (v == null || v.trim().isEmpty) {
@@ -185,17 +338,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                 return null;
                               },
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 14),
                             TextFormField(
                               controller: _passwordCtrl,
                               enabled: !_isLoading,
                               obscureText: _obscurePass,
                               textInputAction: TextInputAction.done,
                               onFieldSubmitted: (_) => _submit(),
-                              decoration: InputDecoration(
-                                labelText: 'Contraseña',
-                                prefixIcon: const Icon(Icons.lock_outline),
-                                suffixIcon: IconButton(
+                              decoration: _decoration(
+                                'Contraseña',
+                                Icons.lock_outline,
+                                suffix: IconButton(
                                   icon: Icon(
                                     _obscurePass
                                         ? Icons.visibility_off_outlined
@@ -203,23 +356,10 @@ class _LoginScreenState extends State<LoginScreen> {
                                   ),
                                   onPressed: _isLoading
                                       ? null
-                                      : () {
-                                          setState(() {
-                                            _obscurePass = !_obscurePass;
-                                          });
-                                        },
+                                      : () => setState(
+                                          () => _obscurePass = !_obscurePass,
+                                        ),
                                 ),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                  borderSide: const BorderSide(
-                                    color: Color(0xFFBBDEFB),
-                                  ),
-                                ),
-                                filled: true,
-                                fillColor: const Color(0xFFE3F2FD),
                               ),
                               validator: (v) {
                                 if (v == null || v.isEmpty) {
@@ -238,7 +378,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 padding: const EdgeInsets.all(10),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFFFFEBEE),
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(12),
                                   border: Border.all(
                                     color: const Color(0xFFEF9A9A),
                                   ),
@@ -248,7 +388,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   children: [
                                     const Icon(
                                       Icons.error_outline,
-                                      color: Color(0xFFC62828),
+                                      color: AppColors.danger,
                                       size: 18,
                                     ),
                                     const SizedBox(width: 8),
@@ -256,7 +396,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       child: Text(
                                         _errorMessage!,
                                         style: const TextStyle(
-                                          color: Color(0xFFC62828),
+                                          color: AppColors.danger,
                                           fontSize: 13,
                                           height: 1.3,
                                         ),
@@ -267,78 +407,29 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             ],
                             const SizedBox(height: 22),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 50,
-                              child: ElevatedButton(
-                                onPressed: _isLoading ? null : _submit,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF0033A0),
-                                  foregroundColor: Colors.white,
-                                  disabledBackgroundColor: const Color(
-                                    0xFF90A4AE,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  elevation: 3,
-                                ),
-                                child: _isLoading
-                                    ? const SizedBox(
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2.5,
-                                        ),
-                                      )
-                                    : Text(
-                                        _isLogin ? 'Entrar' : 'Crear Cuenta',
-                                        style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                          letterSpacing: 0.4,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-                            TextButton(
-                              onPressed: _isLoading
-                                  ? null
-                                  : () {
-                                      setState(() {
-                                        _isLogin = !_isLogin;
-                                        _errorMessage = null;
-                                        _formKey.currentState?.reset();
-                                      });
-                                    },
-                              child: Text(
-                                _isLogin
-                                    ? '¿No tienes cuenta? Regístrate'
-                                    : '¿Ya tienes cuenta? Inicia Sesión',
-                                style: const TextStyle(
-                                  color: Color(0xFF0033A0),
-                                  fontWeight: FontWeight.w600,
-                                  fontSize: 14,
-                                ),
-                              ),
+                            GradientButton(
+                              label: _isLogin ? 'Entrar' : 'Crear cuenta',
+                              icon: _isLogin
+                                  ? Icons.login_rounded
+                                  : Icons.person_add_alt_1_rounded,
+                              loading: _isLoading,
+                              onPressed: _submit,
                             ),
                           ],
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    '🇭🇳 Hecho con orgullo catracho',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
+                    const SizedBox(height: 20),
+                    const Text(
+                      '🇭🇳 Hecho con orgullo catracho',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),

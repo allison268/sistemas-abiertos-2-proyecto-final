@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/card_symbol.dart';
 import '../models/user_model.dart';
+import '../widgets/ui_kit.dart';
 import 'levels_screen.dart';
 
 /// Pantalla que se muestra al iniciar sesión con las instrucciones del juego,
@@ -22,113 +23,91 @@ class InstructionsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF0F6FF),
-      appBar: AppBar(
-        title: const Text('Cómo Jugar'),
-        backgroundColor: const Color(0xFF0033A0),
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFE8F0FE), Color(0xFFFFFFFF)],
-          ),
-        ),
+      backgroundColor: AppColors.background,
+      body: AppBackground(
         child: SafeArea(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _buildHeader(),
-                const SizedBox(height: 20),
-                _buildHowToPlay(),
-                const SizedBox(height: 20),
-                _buildScoring(),
-                const SizedBox(height: 20),
-                _buildLevels(),
-                const SizedBox(height: 20),
-                _buildStarsInfo(),
-                const SizedBox(height: 26),
-                SizedBox(
-                  width: double.infinity,
-                  height: 54,
-                  child: ElevatedButton.icon(
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 560),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildHero(),
+                          const SizedBox(height: 16),
+                          _buildHowToPlay(),
+                          const SizedBox(height: 14),
+                          _buildScoring(),
+                          const SizedBox(height: 14),
+                          _buildLevels(),
+                          const SizedBox(height: 14),
+                          _buildStarsInfo(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 560),
+                  child: GradientButton(
+                    label: '¡Empezar a jugar!',
+                    icon: Icons.play_arrow_rounded,
                     onPressed: () => _startPlaying(context),
-                    icon: const Icon(Icons.play_arrow_rounded, size: 26),
-                    label: const Text(
-                      '¡Empezar a Jugar!',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.4,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0033A0),
-                      foregroundColor: Colors.white,
-                      elevation: 4,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
                   ),
                 ),
-                const SizedBox(height: 10),
-                Center(
-                  child: Text(
-                    '🇭🇳 Encuentra todos los pares antes de que se acabe el tiempo',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: const Color(0xFF616161),
-                      fontSize: 12,
-                      fontStyle: FontStyle.italic,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildHeader() {
+  Widget _buildHero() {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0033A0), Color(0xFF3B6BD0)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(20),
+        gradient: AppColors.hero,
+        borderRadius: BorderRadius.circular(24),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0033A0).withValues(alpha: 0.3),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: AppColors.blue.withValues(alpha: 0.30),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
       child: Row(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.asset(
-              'lib/splash y icono/icono_app.jpg',
-              width: 64,
-              height: 64,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) =>
-                  const Text('🇭🇳', style: TextStyle(fontSize: 44)),
+          Container(
+            padding: const EdgeInsets.all(3),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: AppColors.gold,
+            ),
+            child: ClipOval(
+              child: Image.asset(
+                'lib/splash y icono/icono_app.jpg',
+                width: 64,
+                height: 64,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => const SizedBox(
+                  width: 64,
+                  height: 64,
+                  child: Center(
+                    child: Text('🇭🇳', style: TextStyle(fontSize: 38)),
+                  ),
+                ),
+              ),
             ),
           ),
           const SizedBox(width: 16),
@@ -137,11 +116,21 @@ class InstructionsScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
+                  'CÓMO JUGAR',
+                  style: TextStyle(
+                    color: AppColors.gold,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                SizedBox(height: 2),
+                Text(
                   '¡Bienvenido!',
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
                 SizedBox(height: 4),
@@ -149,9 +138,9 @@ class InstructionsScreen extends StatelessWidget {
                   'Descubre y aprende sobre los símbolos patrios de Honduras '
                   'mientras pones a prueba tu memoria.',
                   style: TextStyle(
-                    color: Colors.white70,
+                    color: Color(0xFFD6E4FF),
                     fontSize: 13,
-                    height: 1.3,
+                    height: 1.35,
                   ),
                 ),
               ],
@@ -177,7 +166,7 @@ class InstructionsScreen extends StatelessWidget {
       _Step(
         Icons.lightbulb_rounded,
         'Aprende datos curiosos',
-        'Cada par encontrado activa la IA que te cuenta un dato curioso del símbolo.',
+        'Cada par encontrado activa la IA del servidor, que te cuenta un dato curioso del símbolo.',
       ),
       _Step(
         Icons.timer_rounded,
@@ -185,27 +174,29 @@ class InstructionsScreen extends StatelessWidget {
         'Tienes 60 segundos por nivel. Encuentra todos los pares antes de que se agote el tiempo.',
       ),
     ];
-    return _section(
-      title: '¿Cómo se juega?',
-      icon: Icons.sports_esports_rounded,
-      children: steps
-          .map(
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionTitle(
+            icon: Icons.sports_esports_rounded,
+            text: '¿Cómo se juega?',
+          ),
+          const SizedBox(height: 16),
+          ...steps.map(
             (s) => Padding(
-              padding: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.only(bottom: 14),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    width: 42,
+                    height: 42,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE3F2FD),
-                      borderRadius: BorderRadius.circular(10),
+                      color: AppColors.sky,
+                      borderRadius: BorderRadius.circular(13),
                     ),
-                    child: Icon(
-                      s.icon,
-                      color: const Color(0xFF0033A0),
-                      size: 20,
-                    ),
+                    child: Icon(s.icon, color: AppColors.blue, size: 22),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -215,18 +206,18 @@ class InstructionsScreen extends StatelessWidget {
                         Text(
                           s.title,
                           style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 14,
-                            color: Color(0xFF212121),
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14.5,
+                            color: AppColors.ink,
                           ),
                         ),
                         const SizedBox(height: 2),
                         Text(
                           s.description,
                           style: const TextStyle(
-                            fontSize: 12.5,
-                            color: Color(0xFF616161),
-                            height: 1.3,
+                            fontSize: 12.8,
+                            color: AppColors.muted,
+                            height: 1.35,
                           ),
                         ),
                       ],
@@ -235,238 +226,187 @@ class InstructionsScreen extends StatelessWidget {
                 ],
               ),
             ),
-          )
-          .toList(),
+          ),
+        ],
+      ),
     );
   }
 
   Widget _buildScoring() {
     final rows = <_ScoreRow>[
       _ScoreRow(
-        '🎯',
+        Icons.gps_fixed_rounded,
         'Por cada par encontrado',
         '+100 pts',
-        const Color(0xFF2E7D32),
+        AppColors.success,
       ),
       _ScoreRow(
-        '⏱️',
+        Icons.timer_rounded,
         'Por cada segundo que te quede',
         '+5 pts',
-        const Color(0xFF2E7D32),
+        AppColors.success,
       ),
       _ScoreRow(
-        '👆',
+        Icons.touch_app_rounded,
         'Por cada movida de más',
         '-5 pts',
-        const Color(0xFFC62828),
+        AppColors.danger,
       ),
     ];
-    return _section(
-      title: '¿Cómo se gana puntos?',
-      icon: Icons.stars_rounded,
-      children: [
-        ...rows.map(
-          (r) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(
-              children: [
-                Text(r.emoji, style: const TextStyle(fontSize: 20)),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    r.label,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF424242),
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionTitle(
+            icon: Icons.stars_rounded,
+            text: '¿Cómo se ganan puntos?',
+          ),
+          const SizedBox(height: 14),
+          ...rows.map(
+            (r) => Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(
+                children: [
+                  Icon(r.icon, color: r.color, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      r.label,
+                      style: const TextStyle(
+                        fontSize: 13.5,
+                        color: AppColors.ink,
+                      ),
                     ),
                   ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: r.color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
+                  InfoPill(text: r.value, color: r.color),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.goldSoft,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: const Color(0xFFFFE082)),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline, size: 18, color: Color(0xFFB26A00)),
+                SizedBox(width: 8),
+                Expanded(
                   child: Text(
-                    r.value,
+                    'Las movidas de más son las que haces después de encontrar '
+                    'todos los pares posibles. ¡Pocas movidas = más puntos!',
                     style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 13,
-                      color: r.color,
+                      fontSize: 12.5,
+                      color: Color(0xFF6D4C41),
+                      height: 1.35,
                     ),
                   ),
                 ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 2),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: const Color(0xFFFFF8E1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFFFE082)),
-          ),
-          child: const Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(Icons.info_outline, size: 18, color: Color(0xFFF57F17)),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Las movidas de más son las que haces después de encontrar '
-                  'todos los pares posibles. ¡Poca movidas = más puntos!',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF795548),
-                    height: 1.3,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
   Widget _buildLevels() {
-    return _section(
-      title: 'Niveles',
-      icon: Icons.flag_rounded,
-      children: LevelConfig.levels.map((config) {
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE3F2FD),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Center(
-                  child: Text(
-                    '${config.level}',
-                    style: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF0033A0),
-                    ),
+    const colors = <Color>[
+      Color(0xFF2E7D32),
+      Color(0xFFEF6C00),
+      Color(0xFFC62828),
+    ];
+    final cards = <Widget>[];
+    for (var i = 0; i < LevelConfig.levels.length; i++) {
+      final config = LevelConfig.levels[i];
+      final color = colors[i % colors.length];
+      if (i > 0) cards.add(const SizedBox(width: 10));
+      cards.add(
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: color.withValues(alpha: 0.35)),
+            ),
+            child: Column(
+              children: [
+                Text(
+                  '${config.level}',
+                  style: TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                    color: color,
                   ),
                 ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      config.name,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                        color: Color(0xFF212121),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${config.pairs} pares · ${config.timeSeconds}s',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF616161),
-                      ),
-                    ),
-                  ],
+                Text(
+                  config.name,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                    color: AppColors.ink,
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  '${config.pairs} pares',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.muted,
+                  ),
+                ),
+                Text(
+                  '${config.timeSeconds} s',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.muted,
+                  ),
+                ),
+              ],
+            ),
           ),
-        );
-      }).toList(),
+        ),
+      );
+    }
+    return AppCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SectionTitle(icon: Icons.flag_rounded, text: 'Niveles'),
+          const SizedBox(height: 14),
+          Row(children: cards),
+        ],
+      ),
     );
   }
 
   Widget _buildStarsInfo() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFBBDEFB)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
+    return AppCard(
+      color: AppColors.goldSoft,
+      borderColor: const Color(0xFFFFE082),
+      child: const Row(
         children: [
-          const Icon(Icons.star_rounded, color: Color(0xFFFFB300), size: 34),
-          const SizedBox(width: 12),
-          const Expanded(
+          Icon(Icons.star_rounded, color: AppColors.gold, size: 36),
+          SizedBox(width: 12),
+          Expanded(
             child: Text(
               'Gana estrellas al completar un nivel. Mientras más rápido y con '
-              'menos movidas termines, más estrellas obtendrás.',
+              'menos movidas termines, más estrellas obtendrás. Tus mejores '
+              'puntajes entran al ranking del servidor.',
               style: TextStyle(
-                fontSize: 12.5,
-                color: Color(0xFF424242),
-                height: 1.3,
+                fontSize: 12.8,
+                color: Color(0xFF5D4037),
+                height: 1.35,
               ),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _section({
-    required String title,
-    required IconData icon,
-    required List<Widget> children,
-  }) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFBBDEFB)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: const Color(0xFF0033A0), size: 20),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF0033A0),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          ...children,
         ],
       ),
     );
@@ -481,9 +421,9 @@ class _Step {
 }
 
 class _ScoreRow {
-  final String emoji;
+  final IconData icon;
   final String label;
   final String value;
   final Color color;
-  const _ScoreRow(this.emoji, this.label, this.value, this.color);
+  const _ScoreRow(this.icon, this.label, this.value, this.color);
 }
