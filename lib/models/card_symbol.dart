@@ -8,12 +8,16 @@ class CardSymbol {
   /// para contárselo al jugador cuando encuentra el par.
   final List<String> facts;
 
+  /// Es true cuando la carta es un departamento y no un símbolo patrio.
+  final bool isDepartment;
+
   const CardSymbol({
     required this.id,
     required this.name,
     required this.image,
     required this.description,
     required this.facts,
+    this.isDepartment = false,
   });
 }
 
@@ -183,6 +187,219 @@ class HonduranSymbols {
       default:
         return all.sublist(0, 4);
     }
+  }
+}
+
+
+/// Modos de juego: los símbolos patrios y los departamentos de Honduras.
+enum GameMode { simbolos, departamentos }
+
+/// Los 18 departamentos de Honduras. Cada nivel usa una selección al azar.
+class HonduranDepartments {
+  static CardSymbol _d(
+    String id,
+    String name,
+    String cabecera,
+    List<String> facts,
+  ) {
+    return CardSymbol(
+      id: id,
+      name: name,
+      image: '${CardAssets.basePath}/dep_$id.png',
+      description: 'Cabecera: $cabecera',
+      facts: facts,
+      isDepartment: true,
+    );
+  }
+
+  static final List<CardSymbol> all = [
+    _d(
+      'atlantida',
+      'Atlántida',
+      'La Ceiba',
+      [
+        'Su cabecera, La Ceiba, es famosa por su Carnaval Internacional que se celebra cada mes de mayo.',
+        'Tiene costa en el mar Caribe y en su territorio está el Parque Nacional Pico Bonito.',
+        'Desde La Ceiba salen los barcos hacia las Islas de la Bahía, en especial a Roatán y Utila.',
+      ],
+    ),
+    _d(
+      'choluteca',
+      'Choluteca',
+      'Choluteca',
+      [
+        'Está en el sur de Honduras y tiene costa en el océano Pacífico, en el golfo de Fonseca.',
+        'Su cabecera lleva el mismo nombre y está a orillas del río Choluteca.',
+        'En esta zona se cultivan melón y sandía, y se cría camarón para exportar.',
+      ],
+    ),
+    _d(
+      'colon',
+      'Colón',
+      'Trujillo',
+      [
+        'Cristóbal Colón llegó a esta costa en 1502, en su cuarto viaje, y de él toma su nombre el departamento.',
+        'Trujillo, su cabecera, fue una de las primeras ciudades fundadas en Honduras.',
+        'Aquí viven comunidades garífunas que mantienen su música, su idioma y su comida.',
+      ],
+    ),
+    _d(
+      'comayagua',
+      'Comayagua',
+      'Comayagua',
+      [
+        'Fue la capital de Honduras hasta 1880, cuando la capital pasó a Tegucigalpa.',
+        'Su catedral tiene un reloj de origen árabe, considerado uno de los más antiguos de América.',
+        'Es muy conocida por sus alfombras de aserrín de Semana Santa.',
+      ],
+    ),
+    _d(
+      'copan',
+      'Copán',
+      'Santa Rosa de Copán',
+      [
+        'Aquí están las ruinas mayas de Copán, declaradas Patrimonio Mundial por la UNESCO en 1980.',
+        'Santa Rosa de Copán es famosa por sus puros y su tradición del tabaco.',
+        'Limita con Guatemala, en el occidente del país.',
+      ],
+    ),
+    _d(
+      'cortes',
+      'Cortés',
+      'San Pedro Sula',
+      [
+        'San Pedro Sula, su cabecera, es considerada la capital industrial de Honduras.',
+        'Puerto Cortés es el principal puerto del país.',
+        'Aquí está la Fortaleza de San Fernando de Omoa, una construcción colonial española.',
+      ],
+    ),
+    _d(
+      'el_paraiso',
+      'El Paraíso',
+      'Yuscarán',
+      [
+        'Yuscarán, su cabecera, es un pueblo colonial que nació de la minería.',
+        'Danlí, en este departamento, celebra cada año el Festival del Maíz.',
+        'Limita con Nicaragua, en el oriente del país.',
+      ],
+    ),
+    _d(
+      'francisco_morazan',
+      'Francisco Morazán',
+      'Tegucigalpa',
+      [
+        'Tegucigalpa es la capital de Honduras desde 1880.',
+        'Lleva el nombre del prócer Francisco Morazán, que nació en Tegucigalpa.',
+        'Aquí está el Parque Nacional La Tigra, un bosque nublado cerca de la capital.',
+      ],
+    ),
+    _d(
+      'gracias_a_dios',
+      'Gracias a Dios',
+      'Puerto Lempira',
+      [
+        'Es el departamento de La Mosquitia, una de las zonas más selváticas de Centroamérica.',
+        'Aquí está la Reserva de la Biosfera del Río Plátano, Patrimonio Mundial de la UNESCO.',
+        'En esta región vive el pueblo miskito, entre otros pueblos.',
+      ],
+    ),
+    _d(
+      'intibuca',
+      'Intibucá',
+      'La Esperanza',
+      [
+        'La Esperanza, su cabecera, es una de las ciudades más frías del país.',
+        'Es una zona con fuerte presencia del pueblo lenca.',
+        'Su clima fresco permite cultivar papa y hortalizas.',
+      ],
+    ),
+    _d(
+      'islas_de_la_bahia',
+      'Islas de la Bahía',
+      'Roatán',
+      [
+        'Está formado por las islas de Roatán, Utila y Guanaja, entre otras.',
+        'Cerca de sus costas está el Sistema Arrecifal Mesoamericano, una de las barreras de coral más grandes del mundo.',
+        'Es muy visitado para bucear, y en las islas se habla español e inglés.',
+      ],
+    ),
+    _d(
+      'la_paz',
+      'La Paz',
+      'La Paz',
+      [
+        'Marcala, en este departamento, produce un café con denominación de origen.',
+        'Es un departamento de montañas y clima fresco.',
+        'Su café se cultiva en las montañas, a buena altura sobre el nivel del mar.',
+      ],
+    ),
+    _d(
+      'lempira',
+      'Lempira',
+      'Gracias',
+      [
+        'Lleva el nombre del cacique Lempira, héroe nacional de Honduras.',
+        'La ciudad de Gracias fue sede de la Real Audiencia de los Confines en 1544.',
+        'Aquí está el Parque Nacional Montaña de Celaque, donde se encuentra el Cerro Las Minas, el punto más alto de Honduras.',
+      ],
+    ),
+    _d(
+      'ocotepeque',
+      'Ocotepeque',
+      'Nueva Ocotepeque',
+      [
+        'Limita con Guatemala y El Salvador, en el occidente del país.',
+        'Cerca está la Reserva Trifinio, donde se juntan las fronteras de tres países.',
+        'Tiene clima fresco y es zona de producción de café.',
+      ],
+    ),
+    _d(
+      'olancho',
+      'Olancho',
+      'Juticalpa',
+      [
+        'Es el departamento más grande de Honduras.',
+        'Es famoso por su ganadería, sus bosques y su producción de madera.',
+        'Aquí está el Parque Nacional Sierra de Agalta.',
+      ],
+    ),
+    _d(
+      'santa_barbara',
+      'Santa Bárbara',
+      'Santa Bárbara',
+      [
+        'Parte del Lago de Yojoa está en este departamento.',
+        'Es conocido por sus artesanías hechas con junco.',
+        'En sus montañas se cultiva buena parte del café del occidente del país.',
+      ],
+    ),
+    _d(
+      'valle',
+      'Valle',
+      'Nacaome',
+      [
+        'Tiene costa en el golfo de Fonseca, en el océano Pacífico.',
+        'En el golfo está la Isla del Tigre, con el puerto de Amapala.',
+        'San Lorenzo es uno de sus puertos sobre el Pacífico.',
+      ],
+    ),
+    _d(
+      'yoro',
+      'Yoro',
+      'Yoro',
+      [
+        'Aquí ocurre el fenómeno de la lluvia de peces, que se celebra con una feria.',
+        'Es uno de los departamentos más extensos del norte del país.',
+        'Es un departamento de valles y montañas en el norte de Honduras.',
+      ],
+    ),
+  ];
+
+  /// Elige al azar tantos departamentos como pares tenga el nivel.
+  static List<CardSymbol> randomForLevel(int level) {
+    final pairs = LevelConfig.get(level).pairs;
+    final list = List<CardSymbol>.from(all)..shuffle();
+    return list.take(pairs).toList();
   }
 }
 
