@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../models/card_symbol.dart';
 import '../services/ai_narrator.dart';
+import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/settings_service.dart';
 import '../services/sound_service.dart';
@@ -53,6 +54,11 @@ class _GameScreenState extends State<GameScreen> {
 
   bool _gold = false;
   int _round = 0;
+
+  // Consejo de la IA que aparece al terminar la partida.
+  String? _tip;
+  bool _tipFromAi = false;
+  bool _tipLoading = false;
   Set<int> _wrong = <int>{};
 
   @override
@@ -207,11 +213,38 @@ class _GameScreenState extends State<GameScreen> {
       SettingsService.haptic(HapticFeedback.vibrate);
       SoundService.play(Sfx.lose);
     }
-    _saveProgress(win: win);
+    final round = _round;
+    // Primero se guarda la partida y luego se pide el consejo, así la IA
+    // también toma en cuenta la partida que acaba de terminar.
+    _saveProgress(win: win).then((_) => _loadTip(round));
     if (!mounted) return;
     setState(() {
       _finished = true;
       _won = win;
+      _tip = null;
+      _tipLoading = true;
+    });
+  }
+
+  /// Pide al servidor Rocky un consejo personal según las últimas partidas.
+  Future<void> _loadTip(int round) async {
+    String? tip;
+    var fromAi = false;
+    try {
+      final resp = await ApiService().get('/api/ia/jugador/consejo', auth: true);
+      if (resp.ok && resp.data is Map) {
+        tip = ((resp.data as Map)['consejo'] as String?)?.trim();
+        fromAi = (resp.data as Map)['ia'] == true;
+      }
+    } on ApiException catch (_) {
+      // Sin conexión: simplemente no se muestra el consejo.
+    }
+    // Si el jugador ya reinició la partida, este consejo ya no aplica.
+    if (!mounted || round != _round) return;
+    setState(() {
+      _tipLoading = false;
+      _tip = (tip == null || tip.isEmpty) ? null : tip;
+      _tipFromAi = fromAi;
     });
   }
 
@@ -459,6 +492,59 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
+  Widget _buildTip() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.goldSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.gold.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.tips_and_updates_rounded, color: Color(0xFFB8860B)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Consejo para ti',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.ink,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    if (!_tipLoading)
+                      InfoPill(
+                        text: _tipFromAi ? 'IA Gemini' : 'Servidor Rocky',
+                        color: _tipFromAi ? AppColors.success : AppColors.muted,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _tipLoading ? 'Consultando a la IA…' : _tip!,
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.3,
+                    color: _tipLoading ? AppColors.muted : AppColors.ink,
+                    fontStyle: _tipLoading ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildResultOverlay() {
     final win = _won;
     final nextUnlocked = win && widget.level < 3;
@@ -602,6 +688,10 @@ class _GameScreenState extends State<GameScreen> {
                       ],
                     ),
                   ),
+                  if (_tipLoading || _tip != null) ...[
+                    const SizedBox(height: 12),
+                    _buildTip(),
+                  ],
                   if (nextUnlocked) ...[
                     const SizedBox(height: 12),
                     Container(

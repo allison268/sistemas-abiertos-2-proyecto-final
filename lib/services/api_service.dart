@@ -54,7 +54,11 @@ class ApiService {
   }
 
   Future<Map<String, String>> _headers(bool auth) async {
-    final headers = <String, String>{'Content-Type': 'application/json'};
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      // Evita la página de aviso de ngrok (versión gratis) en las peticiones.
+      'ngrok-skip-browser-warning': '1',
+    };
     if (auth) {
       final token = await getToken();
       if (token != null) headers['Authorization'] = 'Bearer $token';
@@ -69,10 +73,13 @@ class ApiService {
     });
   }
 
+  /// [timeout] es opcional: sirve para peticiones lentas, como las de la IA.
+  /// Si no se pasa, se usa el tiempo normal de ApiConfig.
   Future<ApiResponse> post(
     String path,
     Map<String, dynamic> body, {
     bool auth = false,
+    Duration? timeout,
   }) {
     return _send(() async {
       final headers = await _headers(auth);
@@ -81,12 +88,15 @@ class ApiService {
         headers: headers,
         body: jsonEncode(body),
       );
-    });
+    }, timeout: timeout);
   }
 
-  Future<ApiResponse> _send(Future<http.Response> Function() request) async {
+  Future<ApiResponse> _send(
+    Future<http.Response> Function() request, {
+    Duration? timeout,
+  }) async {
     try {
-      final resp = await request().timeout(ApiConfig.timeout);
+      final resp = await request().timeout(timeout ?? ApiConfig.timeout);
       dynamic data;
       try {
         data = jsonDecode(utf8.decode(resp.bodyBytes));

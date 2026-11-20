@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# App web compilada (se copia a Rocky con scp)
+servidor/app_web/

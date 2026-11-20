@@ -24,6 +24,9 @@ const pool = mysql.createPool({
 });
 
 const app = express();
+// Detrás de ngrok la conexión llega como http, pero el usuario usa https.
+// Con esto Express usa el protocolo y la dirección reales (sirve para PayPal).
+app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json({ limit: '100kb' }));
 
@@ -287,37 +290,65 @@ app.get('/api/simbolos', ah(async (req, res) => {
   })));
 }));
 
-async function narrarConIA(simbolo, datos, tipo = 'símbolo patrio') {
+// ---------- IA (Google Gemini) ----------
+// Función única para hablar con Gemini. La usan los datos curiosos y el
+// asistente del administrador. Si el modelo principal está ocupado (error 503)
+// o falla, prueba con el modelo de respaldo. Si ninguno responde, devuelve null
+// y quien la llamó usa su propio respaldo, así el juego nunca se rompe.
+function modelosIA() {
+  const lista = [
+    process.env.GEMINI_MODEL,
+    process.env.GEMINI_MODEL_RESPALDO || 'gemini-flash-lite-latest',
+  ].filter(Boolean);
+  return [...new Set(lista)];
+}
+
+const iaConfigurada = () => Boolean(process.env.GEMINI_API_KEY && modelosIA().length);
+
+async function llamarGemini(prompt, { temperatura = 0.7, maxTokens = 800, esperaMs = 15000 } = {}) {
   const key = process.env.GEMINI_API_KEY;
-  const modelo = process.env.GEMINI_MODEL;
-  if (!key || !modelo) return null;
+  if (!key) return null;
+  for (const modelo of modelosIA()) {
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: { temperature: temperatura, maxOutputTokens: maxTokens },
+          }),
+          signal: AbortSignal.timeout(esperaMs),
+        }
+      );
+      if (!r.ok) {
+        console.warn(`Gemini (${modelo}) respondió ${r.status}, probando el siguiente modelo`);
+        continue;
+      }
+      const data = await r.json();
+      const partes = data?.candidates?.[0]?.content?.parts || [];
+      const texto = partes.map((p) => p.text || '').join('').trim();
+      if (texto) return texto;
+    } catch (e) {
+      console.warn(`Gemini (${modelo}) no respondió: ${e.message}`);
+    }
+  }
+  return null;
+}
+
+async function narrarConIA(simbolo, datos, tipo = 'símbolo patrio') {
   const lista = datos.map((d) => `- ${d}`).join('\n');
   const prompt =
     'Eres el narrador del juego de memoria "Memory Honduras", para estudiantes. ' +
     `El jugador acaba de encontrar el par de este elemento (${tipo}): "${simbolo.nombre}" (${simbolo.descripcion}).\n` +
     'Elige AL AZAR UNO de estos tres datos y cuéntaselo en UNA sola frase breve ' +
-    '(máximo 22 palabras), en español, con tono amigable. No enumeres ni repitas la lista:\n' +
+    '(máximo 22 palabras), en español, con tono amigable. No enumeres ni repitas la lista. ' +
+    'No empieces con "Dato curioso" ni con un título; ve directo al dato:\n' +
     `${lista}\nResponde únicamente con la frase, sin comillas.`;
-  try {
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 1.0, maxOutputTokens: 120 },
-        }),
-        signal: AbortSignal.timeout(8000),
-      }
-    );
-    if (!r.ok) return null;
-    const data = await r.json();
-    const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-    return texto && texto.trim() ? texto.trim() : null;
-  } catch (_) {
-    return null;
-  }
+  const texto = await llamarGemini(prompt, { temperatura: 1.0, maxTokens: 300, esperaMs: 8000 });
+  // Por si la IA igual empieza con "¡Dato curioso!" o "Dato curioso:", se quita.
+  return texto ? texto.replace(/^\s*[¡!]?\s*dato curioso\s*[!:.,\-–—]*\s*/i, '').trim() || null : null;
 }
 
 app.get('/api/simbolos/:clave/dato', auth, ah(async (req, res) => {
@@ -407,6 +438,223 @@ app.post('/api/tienda/comprar', auth, ah(async (req, res) => {
   });
 }));
 
+// ---------- Pago real con PayPal ----------
+// Flujo:
+//  1. La app pide crear una orden (/api/paypal/crear-orden).
+//  2. El servidor crea la orden en PayPal y le devuelve a la app el enlace de pago.
+//  3. El jugador paga en la página oficial de PayPal (con su cuenta o con tarjeta).
+//  4. PayPal lo regresa a /api/paypal/retorno; el servidor confirma (captura) el
+//     cobro con PayPal y guarda la compra en MySQL.
+//  5. Mientras tanto la app pregunta cada pocos segundos /api/paypal/orden/:id.
+// Los datos de la tarjeta se escriben SOLO en la página de PayPal: nunca pasan
+// por la app ni por este servidor.
+// PayPal no acepta lempiras, así que se cobra el equivalente en dólares.
+const PAYPAL_API = process.env.PAYPAL_API_URL || (process.env.PAYPAL_MODE === 'live'
+  ? 'https://api-m.paypal.com'
+  : 'https://api-m.sandbox.paypal.com');
+const paypalConfigurado = () =>
+  Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
+const LEMPIRAS_POR_DOLAR = Number(process.env.LEMPIRAS_POR_DOLAR) || 27.07;
+
+let paypalToken = { valor: null, vence: 0 };
+async function tokenPayPal() {
+  if (paypalToken.valor && Date.now() < paypalToken.vence) return paypalToken.valor;
+  const credenciales = Buffer.from(
+    `${process.env.PAYPAL_CLIENT_ID}:${process.env.PAYPAL_CLIENT_SECRET}`
+  ).toString('base64');
+  const r = await fetch(`${PAYPAL_API}/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Basic ${credenciales}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: 'grant_type=client_credentials',
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!r.ok) throw new Error(`PayPal no aceptó las credenciales (${r.status})`);
+  const data = await r.json();
+  paypalToken = { valor: data.access_token, vence: Date.now() + (data.expires_in - 60) * 1000 };
+  return paypalToken.valor;
+}
+
+async function pedirPayPal(metodoHttp, ruta, cuerpo) {
+  const r = await fetch(`${PAYPAL_API}${ruta}`, {
+    method: metodoHttp,
+    headers: {
+      Authorization: `Bearer ${await tokenPayPal()}`,
+      'Content-Type': 'application/json',
+    },
+    body: cuerpo ? JSON.stringify(cuerpo) : undefined,
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await r.json().catch(() => ({}));
+  return { ok: r.ok, status: r.status, data };
+}
+
+// URL pública de este servidor (la misma que usó la app para llamarnos).
+function urlServidor(req) {
+  return (process.env.PUBLIC_URL || `${req.protocol}://${req.get('host')}`).replace(/\/$/, '');
+}
+
+function paginaPago(titulo, mensaje, exito) {
+  const color = exito ? '#2E7D32' : '#C62828';
+  const icono = exito ? '✔' : '✖';
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${titulo}</title>
+<style>body{font-family:system-ui,sans-serif;background:#F4F7FF;display:flex;align-items:center;
+justify-content:center;min-height:100vh;margin:0}.c{background:#fff;border-radius:20px;padding:32px;
+max-width:420px;text-align:center;box-shadow:0 6px 24px #0033a022}.i{width:72px;height:72px;border-radius:50%;
+background:${color};color:#fff;font-size:40px;line-height:72px;margin:0 auto 12px}h1{color:${color};margin:8px 0}
+p{color:#5C6B8A}</style></head><body><div class="c"><div class="i">${icono}</div>
+<h1>${titulo}</h1><p>${mensaje}</p><p><b>Ya puedes cerrar esta pestaña y volver a Memory Honduras.</b></p>
+</div></body></html>`;
+}
+
+app.get('/api/paypal/config', (req, res) => {
+  res.json({
+    activo: paypalConfigurado(),
+    modo: process.env.PAYPAL_MODE === 'live' ? 'live' : 'sandbox',
+    lempirasPorDolar: LEMPIRAS_POR_DOLAR,
+  });
+});
+
+app.post('/api/paypal/crear-orden', auth, ah(async (req, res) => {
+  if (!paypalConfigurado()) {
+    return res.status(503).json({ mensaje: 'PayPal no está configurado en el servidor' });
+  }
+  const { clave, metodo } = req.body || {};
+  if (typeof clave !== 'string' || !['tarjeta', 'paypal'].includes(metodo)) {
+    return res.status(400).json({ mensaje: 'Datos de compra no válidos' });
+  }
+  const [prod] = await pool.execute(
+    'SELECT id_producto, nombre, precio, repetible FROM productos WHERE clave = ? AND activo = 1',
+    [clave]
+  );
+  if (prod.length === 0) return res.status(404).json({ mensaje: 'Producto no encontrado' });
+  const p = prod[0];
+  if (p.repetible !== 1) {
+    const [ya] = await pool.execute(
+      `SELECT 1 FROM compras WHERE id_usuario = ? AND id_producto = ? AND estado = 'aprobada' LIMIT 1`,
+      [req.user.id, p.id_producto]
+    );
+    if (ya.length > 0) return res.status(409).json({ mensaje: 'Ya tienes este producto' });
+  }
+  const montoUsd = Math.max(0.01, Math.round((Number(p.precio) / LEMPIRAS_POR_DOLAR) * 100) / 100).toFixed(2);
+  const base = urlServidor(req);
+  const orden = await pedirPayPal('POST', '/v2/checkout/orders', {
+    intent: 'CAPTURE',
+    purchase_units: [{
+      reference_id: clave,
+      description: `Memory Honduras - ${p.nombre}`.slice(0, 127),
+      custom_id: `${req.user.id}:${p.id_producto}`,
+      amount: { currency_code: 'USD', value: montoUsd },
+    }],
+    payment_source: {
+      paypal: {
+        experience_context: {
+          brand_name: 'Memory Honduras',
+          // 'GUEST_CHECKOUT' abre directo el formulario de tarjeta de PayPal.
+          landing_page: metodo === 'tarjeta' ? 'GUEST_CHECKOUT' : 'LOGIN',
+          shipping_preference: 'NO_SHIPPING',
+          user_action: 'PAY_NOW',
+          return_url: `${base}/api/paypal/retorno`,
+          cancel_url: `${base}/api/paypal/cancelado`,
+        },
+      },
+    },
+  });
+  const enlace = (orden.data.links || []).find((l) => l.rel === 'payer-action' || l.rel === 'approve');
+  if (!orden.ok || !orden.data.id || !enlace) {
+    console.error('PayPal no creó la orden:', orden.status, JSON.stringify(orden.data));
+    return res.status(502).json({ mensaje: 'PayPal no pudo crear el pago, intenta de nuevo' });
+  }
+  await pool.execute(
+    `INSERT INTO pagos_paypal (id_orden, id_usuario, id_producto, metodo, monto_hnl, monto_usd)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [orden.data.id, req.user.id, p.id_producto, metodo, p.precio, montoUsd]
+  );
+  res.status(201).json({
+    orden: orden.data.id,
+    url: enlace.href,
+    montoUsd: Number(montoUsd),
+    modo: process.env.PAYPAL_MODE === 'live' ? 'live' : 'sandbox',
+  });
+}));
+
+// PayPal regresa aquí al jugador después de aprobar el pago.
+app.get('/api/paypal/retorno', ah(async (req, res) => {
+  const idOrden = String(req.query.token || '');
+  const [filas] = await pool.execute('SELECT * FROM pagos_paypal WHERE id_orden = ?', [idOrden]);
+  if (filas.length === 0) {
+    return res.status(404).send(paginaPago('Pago no encontrado', 'No reconocemos esta orden de pago.', false));
+  }
+  const pago = filas[0];
+  if (pago.estado === 'completada') {
+    return res.send(paginaPago('¡Pago aprobado!', `Referencia: ${pago.referencia}`, true));
+  }
+  // Se "aparta" la orden para que recargar la página no cobre dos veces.
+  const [apartada] = await pool.execute(
+    `UPDATE pagos_paypal SET estado = 'procesando' WHERE id_orden = ? AND estado = 'creada'`,
+    [idOrden]
+  );
+  if (apartada.affectedRows !== 1) {
+    return res.send(paginaPago('Pago en proceso', 'Tu pago ya se está procesando.', true));
+  }
+  let cobro;
+  try {
+    cobro = await pedirPayPal('POST', `/v2/checkout/orders/${encodeURIComponent(idOrden)}/capture`, {});
+  } catch (e) {
+    cobro = { ok: false, status: 0, data: { message: e.message } };
+  }
+  const captura = cobro.data?.purchase_units?.[0]?.payments?.captures?.[0];
+  const cobrado = Number(captura?.amount?.value);
+  if (!cobro.ok || cobro.data.status !== 'COMPLETED' || !captura ||
+      captura.status !== 'COMPLETED' || cobrado !== Number(pago.monto_usd)) {
+    const detalle = (cobro.data?.details?.[0]?.issue || cobro.data?.message || `HTTP ${cobro.status}`).toString().slice(0, 250);
+    console.error('PayPal no completó el cobro:', idOrden, detalle);
+    await pool.execute(
+      `UPDATE pagos_paypal SET estado = 'fallida', detalle = ? WHERE id_orden = ?`,
+      [detalle, idOrden]
+    );
+    return res.send(paginaPago('Pago rechazado', 'PayPal no pudo completar el cobro. No se te cobró nada.', false));
+  }
+  const referencia = String(captura.id).slice(0, 24);
+  await pool.execute(
+    `INSERT INTO compras (id_usuario, id_producto, monto, metodo, ultimos4, referencia, estado)
+     VALUES (?, ?, ?, ?, '0000', ?, 'aprobada')`,
+    [pago.id_usuario, pago.id_producto, pago.monto_hnl, pago.metodo, referencia]
+  );
+  await pool.execute(
+    `UPDATE pagos_paypal SET estado = 'completada', referencia = ? WHERE id_orden = ?`,
+    [referencia, idOrden]
+  );
+  res.send(paginaPago('¡Pago aprobado!', `Referencia de PayPal: ${referencia}`, true));
+}));
+
+app.get('/api/paypal/cancelado', ah(async (req, res) => {
+  await pool.execute(
+    `UPDATE pagos_paypal SET estado = 'cancelada' WHERE id_orden = ? AND estado = 'creada'`,
+    [String(req.query.token || '')]
+  );
+  res.send(paginaPago('Pago cancelado', 'Cancelaste el pago. No se te cobró nada.', false));
+}));
+
+// La app pregunta aquí cómo va su pago.
+app.get('/api/paypal/orden/:id', auth, ah(async (req, res) => {
+  const [filas] = await pool.execute(
+    `SELECT pp.estado, pp.referencia, pp.metodo, pp.monto_hnl, pp.monto_usd, p.nombre
+       FROM pagos_paypal pp JOIN productos p ON p.id_producto = pp.id_producto
+      WHERE pp.id_orden = ? AND pp.id_usuario = ?`,
+    [req.params.id, req.user.id]
+  );
+  if (filas.length === 0) return res.status(404).json({ mensaje: 'Pago no encontrado' });
+  const f = filas[0];
+  res.json({
+    estado: f.estado, referencia: f.referencia, metodo: f.metodo,
+    producto: f.nombre, monto: Number(f.monto_hnl), montoUsd: Number(f.monto_usd),
+  });
+}));
+
 // ---------- Departamentos de Honduras ----------
 app.get('/api/departamentos', ah(async (req, res) => {
   const [filas] = await pool.query(
@@ -443,7 +691,9 @@ app.get('/api/departamentos/:clave/dato', auth, ah(async (req, res) => {
 }));
 
 // ---------- Panel de monitoreo del servidor ----------
-app.get('/api/metricas', auth, soloAdmin, ah(async (req, res) => {
+// Reúne todas las métricas del juego y del servidor en un solo objeto.
+// La usan el panel (/api/metricas) y el asistente de IA del administrador.
+async function obtenerMetricas() {
   const [[u]] = await pool.query('SELECT COUNT(*) AS total FROM usuarios');
   const [[p]] = await pool.query(
     `SELECT COUNT(*) AS total,
@@ -499,10 +749,21 @@ app.get('/api/metricas', auth, soloAdmin, ah(async (req, res) => {
     `SELECT modo, COUNT(*) AS jugadas, COALESCE(SUM(resultado = 'ganada'), 0) AS ganadas
        FROM partidas GROUP BY modo`
   );
+  const [ultimas] = await pool.query(
+    `SELECT resultado FROM partidas ORDER BY id_partida DESC LIMIT 10`
+  );
+  let pagosFallidos = 0;
+  try {
+    const [[pf]] = await pool.query(
+      `SELECT COUNT(*) AS total FROM pagos_paypal
+        WHERE estado = 'fallida' AND fecha_creada >= NOW() - INTERVAL 1 DAY`
+    );
+    pagosFallidos = Number(pf.total || 0);
+  } catch (_) { /* la tabla de PayPal aún no existe */ }
   const totalMB = Math.round(os.totalmem() / 1048576);
   const libreMB = Math.round(os.freemem() / 1048576);
   const n = (v) => Number(v || 0);
-  res.json({
+  const metricas = {
     usuarios: n(u.total),
     partidas: {
       total: n(p.total),
@@ -536,13 +797,167 @@ app.get('/api/metricas', auth, soloAdmin, ah(async (req, res) => {
       memoriaLibreMB: libreMB,
       encendidoSeg: Math.round(os.uptime()),
       apiActivaSeg: Math.round(process.uptime()),
-      iaConfigurada: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_MODEL),
+      iaConfigurada: iaConfigurada(),
     },
     generado: new Date().toISOString(),
+  };
+  metricas.alertas = calcularAlertas(metricas, {
+    ultimas: ultimas.map((f) => f.resultado),
+    pagosFallidos,
   });
+  return metricas;
+}
+
+// ---------- Alertas del panel ----------
+// Reglas sencillas que revisan las métricas cada vez que el panel se actualiza
+// (cada 5 segundos). No gastan IA: la IA solo se usa si el administrador pide
+// un consejo sobre las alertas.
+function calcularAlertas(m, { ultimas, pagosFallidos }) {
+  const alertas = [];
+  const s = m.servidor;
+  const usoMemoria = s.memoriaTotalMB ? 1 - s.memoriaLibreMB / s.memoriaTotalMB : 0;
+  if (usoMemoria >= 0.85) {
+    alertas.push({
+      nivel: 'alta',
+      titulo: 'Memoria del servidor casi llena',
+      detalle: `Rocky está usando el ${Math.round(usoMemoria * 100)}% de la memoria RAM.`,
+    });
+  }
+  if (s.cargaCpu > s.cpus) {
+    alertas.push({
+      nivel: 'alta',
+      titulo: 'Procesador muy ocupado',
+      detalle: `La carga del CPU es ${s.cargaCpu} y el servidor tiene ${s.cpus} procesadores.`,
+    });
+  }
+  if (!s.iaConfigurada) {
+    alertas.push({
+      nivel: 'media',
+      titulo: 'La IA no está configurada',
+      detalle: 'Falta GEMINI_API_KEY en el archivo .env; se usan los datos guardados.',
+    });
+  }
+  for (const nv of m.porNivel) {
+    if (nv.jugadas >= 5 && nv.ganadas / nv.jugadas < 0.3) {
+      alertas.push({
+        nivel: 'media',
+        titulo: `El Nivel ${nv.nivel} parece muy difícil`,
+        detalle: `Solo se ganó ${nv.ganadas} de ${nv.jugadas} partidas (${Math.round((100 * nv.ganadas) / nv.jugadas)}%).`,
+      });
+    }
+  }
+  const derrotas = ultimas.filter((r) => r === 'perdida').length;
+  if (ultimas.length >= 5 && derrotas >= Math.ceil(ultimas.length * 0.8)) {
+    alertas.push({
+      nivel: 'media',
+      titulo: 'Muchas derrotas seguidas',
+      detalle: `${derrotas} de las últimas ${ultimas.length} partidas terminaron en derrota.`,
+    });
+  }
+  if (pagosFallidos > 0) {
+    alertas.push({
+      nivel: 'media',
+      titulo: 'Pagos rechazados por PayPal',
+      detalle: `${pagosFallidos} pago(s) no se completaron en las últimas 24 horas.`,
+    });
+  }
+  if (m.usuarios > 0 && m.partidasPorDia.length === 0) {
+    alertas.push({
+      nivel: 'baja',
+      titulo: 'Nadie ha jugado esta semana',
+      detalle: 'No hay partidas en los últimos 7 días.',
+    });
+  }
+  return alertas;
+}
+
+app.get('/api/metricas', auth, soloAdmin, ah(async (req, res) => {
+  res.json(await obtenerMetricas());
 }));
 
-app.get('/', (req, res) => res.redirect('/panel'));
+// ---------- Asistente de IA del administrador ----------
+// El administrador escribe una pregunta. El servidor lee las métricas de MySQL
+// en ese momento y se las pasa a Gemini junto con la pregunta, así la respuesta
+// siempre usa los datos actuales.
+app.post('/api/ia/admin/preguntar', auth, soloAdmin, ah(async (req, res) => {
+  const pregunta = String((req.body && req.body.pregunta) || '').trim();
+  if (pregunta.length < 2 || pregunta.length > 500) {
+    return res.status(400).json({ mensaje: 'Escribe una pregunta de entre 2 y 500 caracteres' });
+  }
+  if (!iaConfigurada()) {
+    return res.status(503).json({ mensaje: 'La IA no está configurada en el servidor (revisa GEMINI_API_KEY en .env)' });
+  }
+  const metricas = await obtenerMetricas();
+  const prompt =
+    'Eres el asistente del administrador del juego "Memory Honduras" (un juego de memoria con ' +
+    'símbolos patrios y departamentos de Honduras). Abajo tienes las métricas ACTUALES del juego y ' +
+    'del servidor Rocky Linux, en formato JSON. Los tiempos están en segundos, la memoria en MB y ' +
+    'los montos en lempiras (L).\n\n' +
+    'Reglas:\n' +
+    '- Responde en español, claro y breve (máximo 120 palabras).\n' +
+    '- Usa SOLO los datos del JSON. Si la respuesta no está en los datos, dilo con honestidad.\n' +
+    '- Cuando ayude, da números concretos y una recomendación corta.\n' +
+    '- No uses formato Markdown (sin asteriscos ni almohadillas).\n\n' +
+    `MÉTRICAS:\n${JSON.stringify(metricas)}\n\n` +
+    `PREGUNTA DEL ADMINISTRADOR: ${pregunta}`;
+  const respuesta = await llamarGemini(prompt, { temperatura: 0.4, maxTokens: 1000 });
+  if (!respuesta) {
+    return res.status(503).json({ mensaje: 'La IA está ocupada en este momento, intenta de nuevo en unos segundos' });
+  }
+  res.json({ respuesta, generado: metricas.generado });
+}));
+
+// ---------- Consejos de la IA para el jugador ----------
+// Al terminar una partida, la app pide un consejo. El servidor lee de MySQL las
+// últimas partidas de ESE jugador y Gemini le da un consejo corto y personal.
+// Si la IA no responde, se usa un consejo armado con reglas sencillas.
+function consejoDeRespaldo(ultima, partidas) {
+  if (!ultima) return '¡Juega tu primera partida! Empieza por el Nivel 1 para conocer los símbolos.';
+  if (ultima.resultado === 'ganada') {
+    const ganadas = partidas.filter((x) => x.resultado === 'ganada').length;
+    return ganadas >= 3
+      ? '¡Vas muy bien! Intenta el siguiente nivel o gana con menos movidas para subir tu puntaje.'
+      : '¡Bien hecho! Para más puntos, termina más rápido: cada segundo que te sobra suma.';
+  }
+  if (ultima.parejas_encontradas < ultima.num_parejas / 2) {
+    return 'Destapa las cartas de una fila a la vez y repite en tu mente lo que viste; así es más fácil recordar.';
+  }
+  return '¡Te faltó poco! Cuando veas una carta que ya apareció, busca su pareja de inmediato.';
+}
+
+app.get('/api/ia/jugador/consejo', auth, ah(async (req, res) => {
+  const [partidas] = await pool.execute(
+    `SELECT p.id_nivel AS nivel, p.resultado, p.puntaje, p.intentos, p.parejas_encontradas,
+            p.duracion_seg, p.modo, n.num_parejas, n.tiempo_limite_seg, n.dificultad
+       FROM partidas p JOIN niveles n ON n.id_nivel = p.id_nivel
+      WHERE p.id_usuario = ?
+      ORDER BY p.id_partida DESC LIMIT 10`,
+    [req.user.id]
+  );
+  const ultima = partidas[0];
+  const respaldo = consejoDeRespaldo(ultima, partidas);
+  if (!ultima || !iaConfigurada()) return res.json({ consejo: respaldo, ia: false });
+
+  const prompt =
+    'Eres el entrenador amigable del juego de memoria "Memory Honduras", para estudiantes. ' +
+    'Abajo están las últimas partidas de un jugador (la primera es la que acaba de terminar). ' +
+    'Cada partida tiene: nivel, resultado, puntaje, intentos (movidas), parejas encontradas de ' +
+    'cuántas había (num_parejas), duración y tiempo límite en segundos.\n' +
+    'Dale UN consejo práctico y motivador para mejorar, basado en esos números. ' +
+    'Máximo 30 palabras, en español, hablándole de "tú", sin Markdown, sin saludar y sin comillas.\n\n' +
+    `PARTIDAS:\n${JSON.stringify(partidas)}`;
+  const consejo = await llamarGemini(prompt, { temperatura: 0.8, maxTokens: 400, esperaMs: 10000 });
+  res.json(consejo ? { consejo, ia: true } : { consejo: respaldo, ia: false });
+}));
+
+// ---------- La app web (Flutter) servida desde Rocky ----------
+// Si existe la carpeta app_web (la app compilada con "flutter build web"),
+// el servidor la entrega en /juego/. Así, con un solo enlace de ngrok, los
+// jugadores abren el juego desde internet sin instalar nada.
+const carpetaApp = path.join(__dirname, 'app_web');
+const hayAppWeb = () => require('fs').existsSync(path.join(carpetaApp, 'index.html'));
+app.use('/juego', express.static(carpetaApp));
+app.get('/', (req, res) => res.redirect(hayAppWeb() ? '/juego/' : '/panel'));
 app.get('/panel', (req, res) =>
   res.sendFile(path.join(__dirname, 'public', 'panel.html'))
 );

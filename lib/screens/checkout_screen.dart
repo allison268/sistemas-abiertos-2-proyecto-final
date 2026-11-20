@@ -1,6 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
+import '../services/api_service.dart';
 import '../services/store_service.dart';
 import '../widgets/ui_kit.dart';
 import 'store_screen.dart';
@@ -84,8 +88,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _error;
   PurchaseResult? _result;
 
+  // Pago real con PayPal. Si el servidor no lo tiene configurado (_payPal.activo
+  // es false) se usa el pago simulado original.
+  PayPalConfig? _payPal;
+  PayPalOrder? _order;
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    _store.payPalConfig().then((c) {
+      if (mounted) setState(() => _payPal = c);
+    });
+  }
+
+  bool get _realPayment => _payPal?.activo == true;
+
   @override
   void dispose() {
+    _poll?.cancel();
     _nameCtrl.dispose();
     _cardCtrl.dispose();
     _expiryCtrl.dispose();
@@ -118,6 +139,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<void> _pay() async {
     if (_paying) return;
+    if (_realPayment) return _payWithPayPal();
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _paying = true;
@@ -141,6 +163,85 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       } else {
         _error = result.message;
       }
+    });
+  }
+
+  /// Pago real: el servidor crea la orden en PayPal, se abre la página oficial
+  /// de PayPal en otra pestaña y la app espera a que el servidor confirme el cobro.
+  Future<void> _payWithPayPal() async {
+    setState(() {
+      _paying = true;
+      _error = null;
+    });
+    try {
+      final order = await _store.createPayPalOrder(
+        clave: widget.product.clave,
+        metodo: _method,
+      );
+      if (!mounted) return;
+      setState(() => _order = order);
+      await _openPayPal();
+      _poll?.cancel();
+      _poll = Timer.periodic(const Duration(seconds: 3), (_) => _checkOrder());
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _paying = false;
+        _error = e.message;
+      });
+    }
+  }
+
+  Future<void> _openPayPal() async {
+    final order = _order;
+    if (order == null) return;
+    final opened = await launchUrl(
+      Uri.parse(order.url),
+      webOnlyWindowName: '_blank',
+    );
+    if (!opened && mounted) {
+      setState(() => _error =
+          'El navegador bloqueó la ventana de PayPal. Presiona "Abrir PayPal".');
+    }
+  }
+
+  Future<void> _checkOrder() async {
+    final order = _order;
+    if (order == null) return;
+    try {
+      final status = await _store.payPalStatus(order.id);
+      if (!mounted) return;
+      if (status.estado == 'completada') {
+        _poll?.cancel();
+        setState(() {
+          _paying = false;
+          _order = null;
+          _result = PurchaseResult(
+            success: true,
+            message: 'Pago aprobado por PayPal',
+            referencia: status.referencia,
+          );
+        });
+      } else if (status.estado == 'cancelada' || status.estado == 'fallida') {
+        _poll?.cancel();
+        setState(() {
+          _paying = false;
+          _order = null;
+          _error = status.estado == 'cancelada'
+              ? 'Cancelaste el pago en PayPal. No se te cobró nada.'
+              : 'PayPal rechazó el pago. No se te cobró nada.';
+        });
+      }
+    } on ApiException catch (_) {
+      // Si falla una consulta, se vuelve a intentar en 3 segundos.
+    }
+  }
+
+  void _cancelWaiting() {
+    _poll?.cancel();
+    setState(() {
+      _paying = false;
+      _order = null;
     });
   }
 
@@ -279,7 +380,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ),
           const SizedBox(height: 16),
           AppCard(
-            child: _method == 'tarjeta' ? _cardFields() : _paypalFields(),
+            child: _payPal == null
+                ? const Center(child: CircularProgressIndicator())
+                : _order != null
+                    ? _waitingPayPal()
+                    : _realPayment
+                        ? _payPalInfo()
+                        : (_method == 'tarjeta'
+                            ? _cardFields()
+                            : _paypalFields()),
           ),
           if (_error != null) ...[
             const SizedBox(height: 12),
@@ -310,15 +419,127 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ],
           const SizedBox(height: 18),
-          GradientButton(
-            label: 'Pagar ${money(p.precio)}',
-            icon: Icons.lock_rounded,
-            loading: _paying,
-            onPressed: _pay,
-          ),
+          if (_order == null)
+            GradientButton(
+              label: _realPayment
+                  ? (_method == 'tarjeta'
+                      ? 'Pagar con tarjeta ${money(p.precio)}'
+                      : 'Pagar con PayPal ${money(p.precio)}')
+                  : 'Pagar ${money(p.precio)}',
+              icon: Icons.lock_rounded,
+              loading: _paying,
+              onPressed: _payPal == null ? null : _pay,
+            ),
           const SizedBox(height: 20),
         ],
       ),
+    );
+  }
+
+  /// Explica a dónde lo vamos a llevar para pagar (pago real con PayPal).
+  Widget _payPalInfo() {
+    final cfg = _payPal!;
+    final usd = cfg.enDolares(widget.product.precio);
+    final card = _method == 'tarjeta';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(
+              card ? Icons.credit_card_rounded : Icons.account_balance_wallet_rounded,
+              color: AppColors.blue,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                card ? 'Pago con tarjeta (procesado por PayPal)' : 'Pago con tu cuenta PayPal',
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.ink,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          card
+              ? 'Se abrirá la página segura de PayPal en otra pestaña para que '
+                    'escribas los datos de tu tarjeta de débito o crédito. '
+                    'No necesitas cuenta de PayPal.'
+              : 'Se abrirá la página segura de PayPal en otra pestaña para que '
+                    'inicies sesión y apruebes el pago.',
+          style: const TextStyle(color: AppColors.muted, height: 1.35),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          'PayPal cobra en dólares: aprox. US\$${usd.toStringAsFixed(2)} '
+          '(1 US\$ = L ${cfg.lempirasPorDolar.toStringAsFixed(2)}).',
+          style: const TextStyle(color: AppColors.muted, fontSize: 12.5),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            const InfoPill(
+              icon: Icons.lock_rounded,
+              text: 'Tus datos solo los ve PayPal',
+              color: AppColors.success,
+            ),
+            if (cfg.modo != 'live')
+              const InfoPill(
+                icon: Icons.science_rounded,
+                text: 'PayPal Sandbox (pruebas)',
+                color: Color(0xFFB8860B),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// Se muestra mientras el jugador paga en la pestaña de PayPal.
+  Widget _waitingPayPal() {
+    final order = _order!;
+    return Column(
+      children: [
+        const SizedBox(height: 6),
+        const CircularProgressIndicator(),
+        const SizedBox(height: 14),
+        const Text(
+          'Completa el pago en la pestaña de PayPal',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontWeight: FontWeight.w800, color: AppColors.ink),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Total: US\$${order.montoUsd.toStringAsFixed(2)}. Esta pantalla se '
+          'actualiza sola cuando PayPal confirme el pago.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: AppColors.muted, fontSize: 13),
+        ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _openPayPal,
+                icon: const Icon(Icons.open_in_new_rounded),
+                label: const Text('Abrir PayPal'),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: TextButton(
+                onPressed: _cancelWaiting,
+                child: const Text('Cancelar'),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 

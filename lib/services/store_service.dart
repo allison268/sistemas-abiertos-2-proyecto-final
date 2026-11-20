@@ -70,8 +70,43 @@ class PurchaseResult {
 
 String money(double v) => 'L ${v.toStringAsFixed(2)}';
 
-/// Habla con la API de la tienda. El pago es simulado: solo se manda al
-/// servidor el método y los últimos 4 dígitos, nunca el número completo.
+/// Configuración de PayPal que manda el servidor.
+class PayPalConfig {
+  final bool activo;
+  final String modo; // 'sandbox' (pruebas) o 'live' (dinero real)
+  final double lempirasPorDolar;
+
+  const PayPalConfig({
+    required this.activo,
+    required this.modo,
+    required this.lempirasPorDolar,
+  });
+
+  double enDolares(double lempiras) => lempiras / lempirasPorDolar;
+}
+
+/// Orden de PayPal recién creada: [url] es la página oficial de pago.
+class PayPalOrder {
+  final String id;
+  final String url;
+  final double montoUsd;
+
+  const PayPalOrder({required this.id, required this.url, required this.montoUsd});
+}
+
+/// Cómo va un pago de PayPal: creada, procesando, completada, cancelada o fallida.
+class PayPalStatus {
+  final String estado;
+  final String? referencia;
+
+  const PayPalStatus({required this.estado, this.referencia});
+}
+
+/// Habla con la API de la tienda.
+/// - Si el servidor tiene PayPal configurado, el pago es real y se hace en la
+///   página oficial de PayPal (con cuenta PayPal o con tarjeta).
+/// - Si no, se usa el pago simulado original: solo se manda al servidor el
+///   método y los últimos 4 dígitos, nunca el número completo.
 class StoreService {
   final ApiService _api = ApiService();
 
@@ -93,6 +128,52 @@ class StoreService {
     return (resp.data as List)
         .map((e) => Purchase.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
+  }
+
+  /// Pregunta al servidor si el pago real con PayPal está configurado.
+  Future<PayPalConfig> payPalConfig() async {
+    try {
+      final resp = await _api.get('/api/paypal/config');
+      if (resp.ok && resp.data is Map) {
+        final d = resp.data as Map;
+        return PayPalConfig(
+          activo: d['activo'] == true,
+          modo: '${d['modo']}',
+          lempirasPorDolar: (d['lempirasPorDolar'] as num?)?.toDouble() ?? 27,
+        );
+      }
+    } on ApiException catch (_) {}
+    return const PayPalConfig(activo: false, modo: 'sandbox', lempirasPorDolar: 27);
+  }
+
+  /// Crea la orden en PayPal (a través del servidor Rocky) y devuelve el enlace de pago.
+  Future<PayPalOrder> createPayPalOrder({
+    required String clave,
+    required String metodo,
+  }) async {
+    final resp = await _api.post(
+      '/api/paypal/crear-orden',
+      {'clave': clave, 'metodo': metodo},
+      auth: true,
+      timeout: const Duration(seconds: 30),
+    );
+    if (!resp.ok || resp.data is! Map) throw ApiException(resp.message);
+    final d = resp.data as Map;
+    return PayPalOrder(
+      id: '${d['orden']}',
+      url: '${d['url']}',
+      montoUsd: (d['montoUsd'] as num).toDouble(),
+    );
+  }
+
+  Future<PayPalStatus> payPalStatus(String orderId) async {
+    final resp = await _api.get('/api/paypal/orden/$orderId', auth: true);
+    if (!resp.ok || resp.data is! Map) throw ApiException(resp.message);
+    final d = resp.data as Map;
+    return PayPalStatus(
+      estado: '${d['estado']}',
+      referencia: d['referencia'] as String?,
+    );
   }
 
   Future<PurchaseResult> buy({

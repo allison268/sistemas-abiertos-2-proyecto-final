@@ -94,7 +94,7 @@ class FactBanner extends StatelessWidget {
                       const SizedBox(height: 4),
                       loading
                           ? const Text(
-                              'Buscando un dato curioso…',
+                              'Consultando a la IA…',
                               style: TextStyle(
                                 fontSize: 13,
                                 fontStyle: FontStyle.italic,
